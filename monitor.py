@@ -19,9 +19,9 @@ import psutil
 import requests
 import yaml
 try:
-    import nvidia_ml_py as nvidia_ml  # type: ignore
+    import pynvml  # provided by nvidia-ml-py package
 except ImportError:
-    nvidia_ml = None
+    pynvml = None
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -98,17 +98,17 @@ def get_ram_usage() -> dict:
 
 def _init_nvml():
     """Lazy-initialise NVML and return the handle, or None on failure."""
-    if nvidia_ml is None:
+    if pynvml is None:
         raise RuntimeError("nvidia-ml-py is not installed")
-    nvidia_ml.nvmlInit()
-    return nvidia_ml.nvmlDeviceGetHandleByIndex(0)
+    pynvml.nvmlInit()
+    return pynvml.nvmlDeviceGetHandleByIndex(0)
 
 
 def get_gpu_usage() -> dict:
     try:
         handle = _init_nvml()
-        utils = nvidia_ml.nvmlDeviceGetUtilizationRates(handle)
-        temp = nvidia_ml.nvmlDeviceGetTemperature(handle, nvidia_ml.NVML_TEMPERATURE_GPU)
+        utils = pynvml.nvmlDeviceGetUtilizationRates(handle)
+        temp = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
         return {"percent": utils.gpu, "temp_c": temp}
     except Exception as exc:
         log.warning("Failed to read GPU metrics: %s", exc)
@@ -118,7 +118,7 @@ def get_gpu_usage() -> dict:
 def get_vram_usage() -> dict:
     try:
         handle = _init_nvml()
-        info = nvidia_ml.nvmlDeviceGetMemoryInfo(handle)
+        info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total_gb = round(info.total / (1024 ** 3), 2)
         used_gb = round(info.used / (1024 ** 3), 2)
         percent = round(used_gb / total_gb * 100, 2) if total_gb else 0
