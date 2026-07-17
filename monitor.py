@@ -228,7 +228,7 @@ class MQTTPublisher:
                 "sw_version": "1.0",
             },
             "state_class": "measurement",
-            "value_topic": value_topic,
+            "state_topic": value_topic,
             "value_template": value_template,
             "availability_topic": f"{self.base_topic}/status",
             "payload_available": "online",
@@ -345,7 +345,7 @@ def main():
             log.debug("Context: %.2f%% (%d/%d tokens)", ctx["percent"], ctx["used_tokens"], ctx["total_tokens"])
 
             # Availability heartbeat
-            publisher.publish(f"{base}/status", "online")
+            publisher._client.publish(f"{base}/status", "online", qos=publisher.qos, retain=True)
 
             log.info("Metrics published successfully.")
 
