@@ -1,0 +1,15 @@
+services:
+  monitor-mqtt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: monitor-mqtt
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      MQTT_USER: ${MQTT_USER}
+      MQTT_PASS: ${MQTT_PASS}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
