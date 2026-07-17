@@ -13,3 +13,9 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - ./config.yaml:/app/config.yaml:ro
+    networks:
+      - ai-server_default
+
+networks:
+  ai-server_default:
+    external: true
