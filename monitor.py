@@ -205,7 +205,8 @@ class MQTTPublisher:
         self._client.publish(topic, msg, qos=self.qos, retain=self.retain)
 
     def publish_discovery(self, sensor_name: str, device_name: str, value_topic: str,
-                          unit: str = "", icon: str = "", device_class: str = ""):
+                          unit: str = "", icon: str = "", device_class: str = "",
+                          value_template: str = "{{ value_json.percent }}"):
         disc_topic = (
             f"{self.discovery_prefix}/sensor/{self.base_topic}/{sensor_name}/config"
         )
@@ -220,6 +221,7 @@ class MQTTPublisher:
             },
             "state_class": "measurement",
             "value_topic": value_topic,
+            "value_template": value_template,
             "availability_topic": f"{self.base_topic}/status",
             "payload_available": "online",
             "payload_not_available": "offline",
@@ -246,30 +248,35 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/cpu/usage",
             "unit": "%",
             "icon": "mdi:speedometer",
+            "value_template": "{{ value_json.percent }}",
         },
         {
             "name": "ram_usage",
             "value_topic": f"{base}/ram/usage",
             "unit": "%",
             "icon": "mdi:memory",
+            "value_template": "{{ value_json.percent }}",
         },
         {
             "name": "gpu_usage",
             "value_topic": f"{base}/gpu/usage",
             "unit": "%",
             "icon": "mdi:gpu",
+            "value_template": "{{ value_json.percent }}",
         },
         {
             "name": "vram_usage",
             "value_topic": f"{base}/vram/usage",
             "unit": "%",
             "icon": "mdi:memory",
+            "value_template": "{{ value_json.percent }}",
         },
         {
             "name": "context_usage",
             "value_topic": f"{base}/context/usage",
             "unit": "%",
             "icon": "mdi:texture-box",
+            "value_template": "{{ value_json.percent }}",
         },
     ]
 
@@ -280,6 +287,7 @@ def publish_discovery_config(publisher: MQTTPublisher):
             value_topic=s["value_topic"],
             unit=s["unit"],
             icon=s["icon"],
+            value_template=s.get("value_template", "{{ value_json.percent }}"),
         )
 
 
