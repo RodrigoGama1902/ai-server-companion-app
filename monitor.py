@@ -157,25 +157,49 @@ def get_vram_usage() -> dict:
         return {"total_gb": -1, "used_gb": -1, "total_mb": -1, "used_mb": -1, "percent": -1}
 
 
+def _parse_prometheus_metric(text: str, name: str):
+    """Return the value of a Prometheus metric line, or None if not found."""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(name + " ") or line.startswith(name + "{"):
+            try:
+                return float(line.rsplit(" ", 1)[1])
+            except (ValueError, IndexError):
+                return None
+    return None
+
+
 def get_context_usage(config: dict) -> dict:
     api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
     try:
-        resp = requests.get(f"{api_url}/health", timeout=5)
+        # Total context window size from /props
+        total_tokens = 0
+        try:
+            props = requests.get(f"{api_url}/props", timeout=5).json()
+            total_tokens = int(
+                props.get("default_generation_settings", {}).get("n_ctx")
+                or props.get("n_ctx")
+                or 0
+            )
+        except Exception as exc:
+            log.debug("Could not read /props for n_ctx: %s", exc)
+
+        # Current KV-cache (context) usage from /metrics (needs server --metrics)
+        resp = requests.get(f"{api_url}/metrics", timeout=5)
         resp.raise_for_status()
-        data = resp.json()
+        ratio = _parse_prometheus_metric(resp.text, "llamacpp:kv_cache_usage_ratio")
+        used = _parse_prometheus_metric(resp.text, "llamacpp:kv_cache_tokens")
 
-        # llama.cpp /health response keys for context:
-        #   ctx_size  — total context window size in tokens
-        #   ctx_used  — current number of tokens in context
-        total_tokens = data.get("ctx_size", 0)
-        used_tokens = data.get("ctx_used", 0)
+        used_tokens = int(used) if used is not None else 0
+        if ratio is not None:
+            percent = round(ratio * 100, 2)
+        elif total_tokens:
+            percent = round(used_tokens / total_tokens * 100, 2)
+        else:
+            percent = 0
 
-        if not total_tokens:
-            # Fallback: some versions use "max_ctx_size" / "used_ctx_tokens"
-            total_tokens = data.get("max_ctx_size", 0) or data.get("ctx_size", 0)
-            used_tokens = data.get("used_ctx_tokens", 0) or data.get("ctx_used", 0)
-
-        percent = round(used_tokens / total_tokens * 100, 2) if total_tokens else 0
         return {
             "total_tokens": total_tokens,
             "used_tokens": used_tokens,
