@@ -53,13 +53,19 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # Configuration
 # ---------------------------------------------------------------------------
 def _resolve_env(value: str) -> str:
-    """Replace ${VAR} patterns with environment variable values."""
+    """Replace ${VAR} and ${VAR:-default} patterns with environment variable values."""
     if not isinstance(value, str):
         return value
     def _replacer(m):
         var = m.group(1)
-        return os.environ.get(var, m.group(0))
-    return re.sub(r"\$\{(\w+)\}", _replacer, value)
+        default = m.group(2)
+        val = os.environ.get(var)
+        if val is not None:
+            return val
+        if default is not None:
+            return default
+        return m.group(0)
+    return re.sub(r"\$\{(\w+)(?::-([^}]*))?\}", _replacer, value)
 
 
 def _deep_resolve(obj):
@@ -99,12 +105,30 @@ def get_ram_usage() -> dict:
     }
 
 
+_nvml_handle = None
+_nvml_initialized = False
+
+
 def _init_nvml():
-    """Lazy-initialise NVML and return the handle, or None on failure."""
+    """Lazy-initialise NVML once and return the cached handle."""
+    global _nvml_handle, _nvml_initialized
     if pynvml is None:
         raise RuntimeError("nvidia-ml-py is not installed")
-    pynvml.nvmlInit()
-    return pynvml.nvmlDeviceGetHandleByIndex(0)
+    if not _nvml_initialized:
+        pynvml.nvmlInit()
+        _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        _nvml_initialized = True
+    return _nvml_handle
+
+
+def _shutdown_nvml():
+    global _nvml_initialized
+    if pynvml is not None and _nvml_initialized:
+        try:
+            pynvml.nvmlShutdown()
+        except Exception:
+            pass
+        _nvml_initialized = False
 
 
 def get_gpu_usage() -> dict:
@@ -134,7 +158,7 @@ def get_vram_usage() -> dict:
 
 
 def get_context_usage(config: dict) -> dict:
-    api_url = config.get("llama", {}).get("api_url", "http://llama:8000")
+    api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
     try:
         resp = requests.get(f"{api_url}/health", timeout=5)
         resp.raise_for_status()
@@ -192,6 +216,10 @@ class MQTTPublisher:
 
     def connect(self):
         log.info("Connecting to MQTT broker at %s:%s …", self.host, self.port)
+        # Last Will: broker publishes 'offline' if the monitor drops unexpectedly
+        self._client.will_set(
+            f"{self.base_topic}/status", "offline", qos=self.qos, retain=True
+        )
         self._client.connect(self.host, self.port, keepalive=60)
         self._client.loop_start()
         # Wait up to 30 s for the broker to accept the connection
@@ -208,11 +236,11 @@ class MQTTPublisher:
             log.info("MQTT connected successfully.")
             self._connected.set()
         else:
-            log.error("MQTT connect failed with code %d", rc)
+            log.error("MQTT connect failed with code %s", rc)
 
-    def _on_disconnect(self, client, userdata, rc, properties):
+    def _on_disconnect(self, client, userdata, disconnect_flags, rc, properties):
         if _running and rc != 0:
-            log.warning("MQTT disconnected (code %d) – will reconnect …", rc)
+            log.warning("MQTT disconnected (code %s) – will reconnect …", rc)
 
     def publish(self, topic: str, payload: dict):
         msg = json.dumps(payload)
@@ -263,7 +291,6 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/cpu/usage",
             "unit": "%",
             "icon": "mdi:speedometer",
-            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
         {
@@ -271,7 +298,6 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/ram/usage",
             "unit": "%",
             "icon": "mdi:memory",
-            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
         {
@@ -287,7 +313,6 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/gpu/usage",
             "unit": "%",
             "icon": "mdi:speedometer",
-            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
         {
@@ -295,7 +320,6 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/vram/usage",
             "unit": "%",
             "icon": "mdi:memory",
-            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
         {
@@ -311,7 +335,6 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/context/usage",
             "unit": "%",
             "icon": "mdi:texture-box",
-            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
     ]
@@ -392,6 +415,7 @@ def main():
     except Exception:
         pass
     publisher.disconnect()
+    _shutdown_nvml()
     log.info("Monitor stopped.")
 
 
