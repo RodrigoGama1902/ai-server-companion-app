@@ -284,7 +284,7 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "name": "gpu_usage",
             "value_topic": f"{base}/gpu/usage",
             "unit": "%",
-            "icon": "mdi:gpu",
+            "icon": "mdi:speedometer",
             "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
