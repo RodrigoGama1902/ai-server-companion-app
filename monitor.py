@@ -93,6 +93,8 @@ def get_ram_usage() -> dict:
     return {
         "total_gb": round(vm.total / (1024 ** 3), 2),
         "used_gb": round(vm.used / (1024 ** 3), 2),
+        "total_mb": round(vm.total / (1024 ** 2), 2),
+        "used_mb": round(vm.used / (1024 ** 2), 2),
         "percent": vm.percent,
     }
 
@@ -122,11 +124,13 @@ def get_vram_usage() -> dict:
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total_gb = round(info.total / (1024 ** 3), 2)
         used_gb = round(info.used / (1024 ** 3), 2)
+        total_mb = round(info.total / (1024 ** 2), 2)
+        used_mb = round(info.used / (1024 ** 2), 2)
         percent = round(used_gb / total_gb * 100, 2) if total_gb else 0
-        return {"total_gb": total_gb, "used_gb": used_gb, "percent": percent}
+        return {"total_gb": total_gb, "used_gb": used_gb, "total_mb": total_mb, "used_mb": used_mb, "percent": percent}
     except Exception as exc:
         log.warning("Failed to read VRAM metrics: %s", exc)
-        return {"total_gb": -1, "used_gb": -1, "percent": -1}
+        return {"total_gb": -1, "used_gb": -1, "total_mb": -1, "used_mb": -1, "percent": -1}
 
 
 def get_context_usage(config: dict) -> dict:
@@ -257,6 +261,7 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/cpu/usage",
             "unit": "%",
             "icon": "mdi:speedometer",
+            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
         {
@@ -264,13 +269,23 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/ram/usage",
             "unit": "%",
             "icon": "mdi:memory",
+            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
+        },
+        {
+            "name": "ram_usage_mb",
+            "value_topic": f"{base}/ram/usage",
+            "unit": "MB",
+            "icon": "mdi:memory",
+            "device_class": "data_size",
+            "value_template": "{{ value_json.used_mb }}",
         },
         {
             "name": "gpu_usage",
             "value_topic": f"{base}/gpu/usage",
             "unit": "%",
             "icon": "mdi:gpu",
+            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
         {
@@ -278,13 +293,23 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "value_topic": f"{base}/vram/usage",
             "unit": "%",
             "icon": "mdi:memory",
+            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
+        },
+        {
+            "name": "vram_usage_mb",
+            "value_topic": f"{base}/vram/usage",
+            "unit": "MB",
+            "icon": "mdi:memory",
+            "device_class": "data_size",
+            "value_template": "{{ value_json.used_mb }}",
         },
         {
             "name": "context_usage",
             "value_topic": f"{base}/context/usage",
             "unit": "%",
             "icon": "mdi:texture-box",
+            "device_class": "battery",
             "value_template": "{{ value_json.percent }}",
         },
     ]
@@ -296,6 +321,7 @@ def publish_discovery_config(publisher: MQTTPublisher):
             value_topic=s["value_topic"],
             unit=s["unit"],
             icon=s["icon"],
+            device_class=s.get("device_class", ""),
             value_template=s.get("value_template", "{{ value_json.percent }}"),
         )
 
