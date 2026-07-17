@@ -134,21 +134,23 @@ def get_vram_usage() -> dict:
 
 
 def get_context_usage(config: dict) -> dict:
-    api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
+    api_url = config.get("llama", {}).get("api_url", "http://llama:8000")
     try:
         resp = requests.get(f"{api_url}/health", timeout=5)
         resp.raise_for_status()
         data = resp.json()
-        # llama.cpp /health returns load with tokens predicted/total info
-        # Typical response keys may vary; handle gracefully
-        total_ctx = data.get("pred", {}).get("ttd", {}).get("avg", 0) or 0
-        # Fallback: look for mu_ctx_tokens / mu_ctx_size or similar
-        ctx_used = data.get("pred", {}).get("token_s", 0) or 0
-        # More reliable path: check server loading context
-        total_tokens = data.get("ctx_size", 0) or data.get("pred", {}).get("tts", {}).get("avg", 0) or 0
-        used_tokens = 0
-        if "loading" in data:
-            used_tokens = data.get("ctx_used", 0) or 0
+
+        # llama.cpp /health response keys for context:
+        #   ctx_size  — total context window size in tokens
+        #   ctx_used  — current number of tokens in context
+        total_tokens = data.get("ctx_size", 0)
+        used_tokens = data.get("ctx_used", 0)
+
+        if not total_tokens:
+            # Fallback: some versions use "max_ctx_size" / "used_ctx_tokens"
+            total_tokens = data.get("max_ctx_size", 0) or data.get("ctx_size", 0)
+            used_tokens = data.get("used_ctx_tokens", 0) or data.get("ctx_used", 0)
+
         percent = round(used_tokens / total_tokens * 100, 2) if total_tokens else 0
         return {
             "total_tokens": total_tokens,
