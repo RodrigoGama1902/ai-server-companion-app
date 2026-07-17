@@ -13,6 +13,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from threading import Event
 
 import paho.mqtt.client as mqtt
 import psutil
@@ -178,6 +179,8 @@ class MQTTPublisher:
         if username:
             self._client.username_pw_set(username, password or "")
 
+        self._connected = Event()
+
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
 
@@ -185,6 +188,10 @@ class MQTTPublisher:
         log.info("Connecting to MQTT broker at %s:%s …", self.host, self.port)
         self._client.connect(self.host, self.port, keepalive=60)
         self._client.loop_start()
+        # Wait up to 30 s for the broker to accept the connection
+        if not self._connected.wait(timeout=30):
+            log.error("MQTT connection timed out")
+            sys.exit(1)
 
     def disconnect(self):
         self._client.loop_stop()
@@ -193,6 +200,7 @@ class MQTTPublisher:
     def _on_connect(self, client, userdata, flags, rc, properties):
         if rc == 0:
             log.info("MQTT connected successfully.")
+            self._connected.set()
         else:
             log.error("MQTT connect failed with code %d", rc)
 
