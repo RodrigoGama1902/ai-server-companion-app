@@ -222,7 +222,7 @@ class MQTTPublisher:
             "name": sensor_name.replace("_", " ").title(),
             "unique_id": f"{self.base_topic}_{sensor_name}",
             "device": {
-                "ids": self.base_topic,
+                "identifiers": [self.base_topic],
                 "name": device_name,
                 "model": "AI Server",
                 "sw_version": "1.0",
@@ -233,7 +233,6 @@ class MQTTPublisher:
             "availability_topic": f"{self.base_topic}/status",
             "payload_available": "online",
             "payload_not_available": "offline",
-            "qos": self.qos,
         }
         if unit:
             config_payload["unit_of_measurement"] = unit
@@ -241,9 +240,11 @@ class MQTTPublisher:
             config_payload["icon"] = icon
         if device_class:
             config_payload["device_class"] = device_class
-        self._client.publish(disc_topic, json.dumps(config_payload),
+        payload_json = json.dumps(config_payload)
+        self._client.publish(disc_topic, payload_json,
                              qos=self.qos, retain=True)
         log.info("Published discovery for '%s' → %s", sensor_name, disc_topic)
+        log.debug("  Discovery payload: %s", payload_json)
 
 
 def publish_discovery_config(publisher: MQTTPublisher):
