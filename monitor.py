@@ -175,20 +175,19 @@ def get_llama_metrics(config: dict) -> dict:
     """
     Fetch all llama.cpp server metrics in one pass.
 
-    Sources (in order of reliability):
-      /props  — total_slots, is_sleeping, n_ctx fallback        (always available)
-      /slots  — per-slot n_ctx / n_past for context, is_processing for state
-                                                                 (always available)
-      /metrics — TPS and queue depth (Prometheus)               (requires --metrics)
+    Sources:
+      /props   — total_slots, is_sleeping                       (always available)
+      /slots   — is_processing for state, n_ctx                 (always available)
+      /metrics — KV cache usage + TPS + queue (Prometheus)      (requires --metrics)
+
+    Context usage comes from /metrics when available (accurate KV ratio).
+    Falls back to n_past/n_kv from /slots if present (not all forks expose these).
     """
     api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
 
     out = {
-        # status
         "state": "unknown", "active_slots": -1, "total_slots": -1,
-        # context
         "total_tokens": -1, "used_tokens": -1, "percent": -1,
-        # speed / queue
         "prompt_tps": 0, "gen_tps": 0,
         "requests_processing": 0, "requests_deferred": 0,
     }
@@ -199,44 +198,55 @@ def get_llama_metrics(config: dict) -> dict:
             props = requests.get(f"{api_url}/props", timeout=5).json()
             out["total_slots"] = props.get("total_slots", 1)
             if props.get("is_sleeping", False):
-                out["state"] = "sleeping"
-                out["active_slots"] = 0
-                out["total_tokens"] = 0
-                out["used_tokens"] = 0
-                out["percent"] = 0
+                out.update({"state": "sleeping", "active_slots": 0,
+                            "total_tokens": 0, "used_tokens": 0, "percent": 0})
                 return out
         except Exception as exc:
             log.debug("Could not read /props: %s", exc)
 
-        # ── /slots  (context + state — no --metrics needed) ─────
+        # ── /slots  (state + optional context fallback) ─────────
         slots_resp = requests.get(f"{api_url}/slots", timeout=5)
         slots_resp.raise_for_status()
         slots = slots_resp.json()
 
+        ctx_size = 0
         if isinstance(slots, list) and slots:
             active = sum(1 for s in slots if s.get("is_processing", False))
             out["active_slots"] = active
             out["state"] = "processing" if active > 0 else "idle"
-
-            # n_ctx is per-slot; use the max (all slots share same ctx size)
             ctx_size = max((s.get("n_ctx", 0) for s in slots), default=0)
-            # n_past is consumed tokens per slot; sum across all active slots
-            used = sum(
-                s.get("n_past") or s.get("n_kv", 0)
-                for s in slots
-            )
-            out["total_tokens"] = ctx_size
-            out["used_tokens"] = used
-            out["percent"] = round(used / ctx_size * 100, 2) if ctx_size > 0 else 0
+
+            # n_past / n_kv: present in mainline llama.cpp, absent in some forks
+            used = sum(s.get("n_past") or s.get("n_kv") or 0 for s in slots)
+            if ctx_size > 0 and used > 0:
+                out["total_tokens"] = ctx_size
+                out["used_tokens"] = used
+                out["percent"] = round(used / ctx_size * 100, 2)
+            elif ctx_size > 0:
+                # Fork without n_past — keep -1 until /metrics fills it in
+                out["total_tokens"] = ctx_size
         else:
             out["state"] = "idle"
             out["active_slots"] = 0
 
-        # ── /metrics  (TPS + queue — optional, needs --metrics) ─
+        # ── /metrics  (KV cache + TPS — requires --metrics) ─────
         try:
             resp = requests.get(f"{api_url}/metrics", timeout=3)
             if resp.ok:
                 text = resp.text
+
+                # Context from KV cache ratio (more accurate than n_past sum)
+                ratio = _parse_prometheus_metric(text, "llamacpp:kv_cache_usage_ratio")
+                kv_tokens = _parse_prometheus_metric(text, "llamacpp:kv_cache_tokens")
+                if ratio is not None:
+                    out["percent"] = round(ratio * 100, 2)
+                    if kv_tokens is not None:
+                        out["used_tokens"] = int(kv_tokens)
+                    if ctx_size > 0 and ratio > 0 and out["used_tokens"] > 0:
+                        out["total_tokens"] = round(out["used_tokens"] / ratio)
+                    elif ctx_size > 0:
+                        out["total_tokens"] = ctx_size
+
                 for key, metric_name in [
                     ("prompt_tps",          "llamacpp:prompt_tokens_seconds"),
                     ("gen_tps",             "llamacpp:predicted_tokens_seconds"),
