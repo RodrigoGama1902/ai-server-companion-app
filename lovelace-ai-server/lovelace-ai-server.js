@@ -276,6 +276,10 @@
       font-weight: 700;
       color: var(--primary-text-color, #e2e8f0);
     }
+    .ctx-pct--na {
+      color: var(--secondary-text-color, #64748b);
+      font-style: italic;
+    }
     .ctx-bar-track {
       width: 100%;
       height: 6px;
@@ -486,11 +490,12 @@
       let contextHTML = '';
       if (cfg.context_entity && ctxPct !== null) {
         const pct = parseFloat(ctxPct);
-        const color = usageColor(pct);
+        const unavail = isNaN(pct) || pct < 0;
+        const color = unavail ? 'var(--secondary-text-color, #64748b)' : usageColor(pct);
         const usedN = parseFloat(ctxTokens);
         let tokensLine = '';
-        if (!isNaN(usedN) && usedN >= 0) {
-          if (!isNaN(pct) && pct > 0) {
+        if (!unavail && !isNaN(usedN) && usedN >= 0) {
+          if (pct > 0) {
             const total = Math.round(usedN / (pct / 100));
             tokensLine = `${fmtTokens(usedN)}&thinsp;/&thinsp;${fmtTokens(total)} tokens`;
           } else {
@@ -501,13 +506,13 @@
           <div class="context-section">
             <div class="ctx-header">
               <span class="ctx-label">Contexto</span>
-              <span class="ctx-pct">${isNaN(pct) ? '--' : pct.toFixed(1)}%</span>
+              <span class="ctx-pct ${unavail ? 'ctx-pct--na' : ''}">${unavail ? 'N/A' : pct.toFixed(1) + '%'}</span>
             </div>
             <div class="ctx-bar-track">
               <div class="ctx-bar-fill"
-                style="width:${isNaN(pct) ? 0 : Math.min(pct,100)}%;background:${color}"></div>
+                style="width:${unavail ? 0 : Math.max(0, Math.min(pct, 100))}%;background:${color}"></div>
             </div>
-            ${tokensLine ? `<span class="ctx-tokens">${tokensLine}</span>` : ''}
+            ${tokensLine ? `<span class="ctx-tokens">${tokensLine}</span>` : (unavail ? '<span class="ctx-tokens">Servidor llama.cpp indisponível</span>' : '')}
           </div>`;
       }
 
@@ -518,7 +523,7 @@
         const gTps = parseFloat(genTps);
         const queue = parseFloat(queueDepth);
         const isActive = !isNaN(gTps) && gTps > 0;
-        const queueVal = (!isNaN(queue) && queue >= 0) ? Math.round(queue) : 0;
+        const queueVal = (!isNaN(queue) && queue >= 0) ? Math.round(queue) : '--';
         const promptItem = cfg.llama_prompt_tps_entity
           ? `<div class="speed-item">
               <span class="speed-val">${isNaN(pTps) || pTps < 0 ? '--' : pTps.toFixed(1)}</span>
