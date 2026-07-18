@@ -171,76 +171,91 @@ def _parse_prometheus_metric(text: str, name: str):
     return None
 
 
-def get_context_usage(config: dict) -> dict:
+def get_llama_metrics(config: dict) -> dict:
+    """
+    Fetch all llama.cpp server metrics in one pass.
+
+    Sources (in order of reliability):
+      /props  — total_slots, is_sleeping, n_ctx fallback        (always available)
+      /slots  — per-slot n_ctx / n_past for context, is_processing for state
+                                                                 (always available)
+      /metrics — TPS and queue depth (Prometheus)               (requires --metrics)
+    """
     api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
+
+    out = {
+        # status
+        "state": "unknown", "active_slots": -1, "total_slots": -1,
+        # context
+        "total_tokens": -1, "used_tokens": -1, "percent": -1,
+        # speed / queue
+        "prompt_tps": 0, "gen_tps": 0,
+        "requests_processing": 0, "requests_deferred": 0,
+    }
+
     try:
-        # Total context window size from /props
-        total_tokens = 0
+        # ── /props ──────────────────────────────────────────────
         try:
             props = requests.get(f"{api_url}/props", timeout=5).json()
-            total_tokens = int(
-                props.get("default_generation_settings", {}).get("n_ctx")
-                or props.get("n_ctx")
-                or 0
-            )
+            out["total_slots"] = props.get("total_slots", 1)
+            if props.get("is_sleeping", False):
+                out["state"] = "sleeping"
+                out["active_slots"] = 0
+                out["total_tokens"] = 0
+                out["used_tokens"] = 0
+                out["percent"] = 0
+                return out
         except Exception as exc:
-            log.debug("Could not read /props for n_ctx: %s", exc)
+            log.debug("Could not read /props: %s", exc)
 
-        # KV-cache, speed, and queue metrics from /metrics (needs server --metrics)
-        resp = requests.get(f"{api_url}/metrics", timeout=5)
-        resp.raise_for_status()
-        text = resp.text
+        # ── /slots  (context + state — no --metrics needed) ─────
+        slots_resp = requests.get(f"{api_url}/slots", timeout=5)
+        slots_resp.raise_for_status()
+        slots = slots_resp.json()
 
-        ratio = _parse_prometheus_metric(text, "llamacpp:kv_cache_usage_ratio")
-        used = _parse_prometheus_metric(text, "llamacpp:kv_cache_tokens")
-        prompt_tps = _parse_prometheus_metric(text, "llamacpp:prompt_tokens_seconds")
-        gen_tps = _parse_prometheus_metric(text, "llamacpp:predicted_tokens_seconds")
-        requests_processing = _parse_prometheus_metric(text, "llamacpp:requests_processing")
-        requests_deferred = _parse_prometheus_metric(text, "llamacpp:requests_deferred")
+        if isinstance(slots, list) and slots:
+            active = sum(1 for s in slots if s.get("is_processing", False))
+            out["active_slots"] = active
+            out["state"] = "processing" if active > 0 else "idle"
 
-        used_tokens = int(used) if used is not None else 0
-        if ratio is not None:
-            percent = round(ratio * 100, 2)
-        elif total_tokens:
-            percent = round(used_tokens / total_tokens * 100, 2)
+            # n_ctx is per-slot; use the max (all slots share same ctx size)
+            ctx_size = max((s.get("n_ctx", 0) for s in slots), default=0)
+            # n_past is consumed tokens per slot; sum across all active slots
+            used = sum(
+                s.get("n_past") or s.get("n_kv", 0)
+                for s in slots
+            )
+            out["total_tokens"] = ctx_size
+            out["used_tokens"] = used
+            out["percent"] = round(used / ctx_size * 100, 2) if ctx_size > 0 else 0
         else:
-            percent = 0
+            out["state"] = "idle"
+            out["active_slots"] = 0
 
-        return {
-            "total_tokens": total_tokens,
-            "used_tokens": used_tokens,
-            "percent": percent,
-            "prompt_tps": round(prompt_tps, 2) if prompt_tps is not None else 0,
-            "gen_tps": round(gen_tps, 2) if gen_tps is not None else 0,
-            "requests_processing": int(requests_processing) if requests_processing is not None else 0,
-            "requests_deferred": int(requests_deferred) if requests_deferred is not None else 0,
-        }
+        # ── /metrics  (TPS + queue — optional, needs --metrics) ─
+        try:
+            resp = requests.get(f"{api_url}/metrics", timeout=3)
+            if resp.ok:
+                text = resp.text
+                for key, metric_name in [
+                    ("prompt_tps",          "llamacpp:prompt_tokens_seconds"),
+                    ("gen_tps",             "llamacpp:predicted_tokens_seconds"),
+                    ("requests_processing", "llamacpp:requests_processing"),
+                    ("requests_deferred",   "llamacpp:requests_deferred"),
+                ]:
+                    val = _parse_prometheus_metric(text, metric_name)
+                    if val is not None:
+                        out[key] = round(val, 2) if key.endswith("_tps") else int(val)
+            else:
+                log.debug("/metrics returned HTTP %s — start llama with --metrics for TPS data", resp.status_code)
+        except Exception as exc:
+            log.debug("Could not read /metrics (--metrics not enabled?): %s", exc)
+
+        return out
+
     except Exception as exc:
-        log.warning("Failed to read context metrics: %s", exc)
-        return {
-            "total_tokens": -1, "used_tokens": -1, "percent": -1,
-            "prompt_tps": -1, "gen_tps": -1,
-            "requests_processing": -1, "requests_deferred": -1,
-        }
-
-
-def get_llama_status(config: dict) -> dict:
-    """Derive idle / processing / sleeping state from /props and /slots."""
-    api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
-    try:
-        props = requests.get(f"{api_url}/props", timeout=5).json()
-        total_slots = props.get("total_slots", 1)
-
-        if props.get("is_sleeping", False):
-            return {"state": "sleeping", "active_slots": 0, "total_slots": total_slots}
-
-        slots = requests.get(f"{api_url}/slots", timeout=5).json()
-        active_slots = sum(1 for s in slots if s.get("is_processing", False))
-        state = "processing" if active_slots > 0 else "idle"
-        return {"state": state, "active_slots": active_slots, "total_slots": total_slots}
-    except Exception as exc:
-        log.warning("Failed to read llama status: %s", exc)
-        return {"state": "unknown", "active_slots": -1, "total_slots": -1}
+        log.warning("Failed to read llama.cpp metrics from %s: %s", api_url, exc)
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -506,19 +521,29 @@ def main():
             publisher.publish(f"{base}/vram/usage", vram)
             log.debug("VRAM: %.1f%% (%.1f/%.1f GB)", vram["percent"], vram["used_gb"], vram["total_gb"])
 
-            # Context + inference speed
-            ctx = get_context_usage(config)
-            publisher.publish(f"{base}/context/usage", ctx)
+            # Context + state + speed (single pass against llama.cpp)
+            llama = get_llama_metrics(config)
+            publisher.publish(f"{base}/context/usage", {
+                "total_tokens":       llama["total_tokens"],
+                "used_tokens":        llama["used_tokens"],
+                "percent":            llama["percent"],
+                "prompt_tps":         llama["prompt_tps"],
+                "gen_tps":            llama["gen_tps"],
+                "requests_processing":llama["requests_processing"],
+                "requests_deferred":  llama["requests_deferred"],
+            })
+            publisher.publish(f"{base}/llama/status", {
+                "state":        llama["state"],
+                "active_slots": llama["active_slots"],
+                "total_slots":  llama["total_slots"],
+            })
             log.debug(
-                "Context: %.2f%% (%d/%d tokens) | prompt=%.1f t/s gen=%.1f t/s queued=%d",
-                ctx["percent"], ctx["used_tokens"], ctx["total_tokens"],
-                ctx["prompt_tps"], ctx["gen_tps"], ctx["requests_deferred"],
+                "Llama: %s | ctx %.1f%% (%d/%d tok) | prompt=%.1f gen=%.1f t/s | queued=%d",
+                llama["state"], llama["percent"],
+                llama["used_tokens"], llama["total_tokens"],
+                llama["prompt_tps"], llama["gen_tps"],
+                llama["requests_deferred"],
             )
-
-            # Llama state (idle / processing / sleeping)
-            status = get_llama_status(config)
-            publisher.publish(f"{base}/llama/status", status)
-            log.debug("Llama state: %s (%d/%d slots active)", status["state"], status["active_slots"], status["total_slots"])
 
             # Availability heartbeat
             publisher._client.publish(f"{base}/status", "online", qos=publisher.qos, retain=True)
