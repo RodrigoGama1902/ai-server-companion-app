@@ -11,6 +11,9 @@ services:
       MQTT_PASS: ${MQTT_PASS}
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      LLAMA_API_URL: ${LLAMA_API_URL:-http://host.docker.internal:8020}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./config.yaml:/app/config.yaml:ro
     networks:
