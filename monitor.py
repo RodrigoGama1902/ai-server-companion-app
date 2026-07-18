@@ -216,15 +216,25 @@ def get_llama_metrics(config: dict) -> dict:
             out["state"] = "processing" if active > 0 else "idle"
             ctx_size = max((s.get("n_ctx", 0) for s in slots), default=0)
 
-            # n_past / n_kv: present in mainline llama.cpp, absent in some forks
+            # n_past / n_kv: present in mainline llama.cpp, absent in some forks (e.g. beellama)
             used = sum(s.get("n_past") or s.get("n_kv") or 0 for s in slots)
             if ctx_size > 0 and used > 0:
                 out["total_tokens"] = ctx_size
                 out["used_tokens"] = used
                 out["percent"] = round(used / ctx_size * 100, 2)
             elif ctx_size > 0:
-                # Fork without n_past — keep -1 until /metrics fills it in
+                # Fallback: use n_prompt_tokens from active slots (beellama-style forks)
+                prompt_used = sum(
+                    s.get("n_prompt_tokens", 0)
+                    for s in slots if s.get("is_processing", False)
+                )
                 out["total_tokens"] = ctx_size
+                if prompt_used > 0:
+                    out["used_tokens"] = prompt_used
+                    out["percent"] = round(prompt_used / ctx_size * 100, 2)
+                else:
+                    out["used_tokens"] = 0
+                    out["percent"] = 0
         else:
             out["state"] = "idle"
             out["active_slots"] = 0
@@ -235,7 +245,8 @@ def get_llama_metrics(config: dict) -> dict:
             if resp.ok:
                 text = resp.text
 
-                # Context from KV cache ratio (more accurate than n_past sum)
+                # Context from KV cache ratio (accurate — mainline llama.cpp)
+                # beellama fork does not expose these metrics; slots fallback is used instead
                 ratio = _parse_prometheus_metric(text, "llamacpp:kv_cache_usage_ratio")
                 kv_tokens = _parse_prometheus_metric(text, "llamacpp:kv_cache_tokens")
                 if ratio is not None:
