@@ -186,11 +186,17 @@ def get_context_usage(config: dict) -> dict:
         except Exception as exc:
             log.debug("Could not read /props for n_ctx: %s", exc)
 
-        # Current KV-cache (context) usage from /metrics (needs server --metrics)
+        # KV-cache, speed, and queue metrics from /metrics (needs server --metrics)
         resp = requests.get(f"{api_url}/metrics", timeout=5)
         resp.raise_for_status()
-        ratio = _parse_prometheus_metric(resp.text, "llamacpp:kv_cache_usage_ratio")
-        used = _parse_prometheus_metric(resp.text, "llamacpp:kv_cache_tokens")
+        text = resp.text
+
+        ratio = _parse_prometheus_metric(text, "llamacpp:kv_cache_usage_ratio")
+        used = _parse_prometheus_metric(text, "llamacpp:kv_cache_tokens")
+        prompt_tps = _parse_prometheus_metric(text, "llamacpp:prompt_tokens_seconds")
+        gen_tps = _parse_prometheus_metric(text, "llamacpp:predicted_tokens_seconds")
+        requests_processing = _parse_prometheus_metric(text, "llamacpp:requests_processing")
+        requests_deferred = _parse_prometheus_metric(text, "llamacpp:requests_deferred")
 
         used_tokens = int(used) if used is not None else 0
         if ratio is not None:
@@ -204,10 +210,37 @@ def get_context_usage(config: dict) -> dict:
             "total_tokens": total_tokens,
             "used_tokens": used_tokens,
             "percent": percent,
+            "prompt_tps": round(prompt_tps, 2) if prompt_tps is not None else 0,
+            "gen_tps": round(gen_tps, 2) if gen_tps is not None else 0,
+            "requests_processing": int(requests_processing) if requests_processing is not None else 0,
+            "requests_deferred": int(requests_deferred) if requests_deferred is not None else 0,
         }
     except Exception as exc:
         log.warning("Failed to read context metrics: %s", exc)
-        return {"total_tokens": -1, "used_tokens": -1, "percent": -1}
+        return {
+            "total_tokens": -1, "used_tokens": -1, "percent": -1,
+            "prompt_tps": -1, "gen_tps": -1,
+            "requests_processing": -1, "requests_deferred": -1,
+        }
+
+
+def get_llama_status(config: dict) -> dict:
+    """Derive idle / processing / sleeping state from /props and /slots."""
+    api_url = config.get("llama", {}).get("api_url", "http://llama:8080")
+    try:
+        props = requests.get(f"{api_url}/props", timeout=5).json()
+        total_slots = props.get("total_slots", 1)
+
+        if props.get("is_sleeping", False):
+            return {"state": "sleeping", "active_slots": 0, "total_slots": total_slots}
+
+        slots = requests.get(f"{api_url}/slots", timeout=5).json()
+        active_slots = sum(1 for s in slots if s.get("is_processing", False))
+        state = "processing" if active_slots > 0 else "idle"
+        return {"state": state, "active_slots": active_slots, "total_slots": total_slots}
+    except Exception as exc:
+        log.warning("Failed to read llama status: %s", exc)
+        return {"state": "unknown", "active_slots": -1, "total_slots": -1}
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +402,48 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "icon": "mdi:texture-box",
             "value_template": "{{ value_json.percent }}",
         },
+        {
+            "name": "context_tokens_used",
+            "value_topic": f"{base}/context/usage",
+            "unit": "tokens",
+            "icon": "mdi:counter",
+            "value_template": "{{ value_json.used_tokens }}",
+        },
+        {
+            "name": "llama_state",
+            "value_topic": f"{base}/llama/status",
+            "unit": "",
+            "icon": "mdi:robot",
+            "value_template": "{{ value_json.state }}",
+        },
+        {
+            "name": "llama_active_slots",
+            "value_topic": f"{base}/llama/status",
+            "unit": "",
+            "icon": "mdi:application-cog",
+            "value_template": "{{ value_json.active_slots }}",
+        },
+        {
+            "name": "llama_prompt_tps",
+            "value_topic": f"{base}/context/usage",
+            "unit": "tokens/s",
+            "icon": "mdi:fast-forward",
+            "value_template": "{{ value_json.prompt_tps }}",
+        },
+        {
+            "name": "llama_gen_tps",
+            "value_topic": f"{base}/context/usage",
+            "unit": "tokens/s",
+            "icon": "mdi:play-speed",
+            "value_template": "{{ value_json.gen_tps }}",
+        },
+        {
+            "name": "llama_requests_deferred",
+            "value_topic": f"{base}/context/usage",
+            "unit": "",
+            "icon": "mdi:timer-sand",
+            "value_template": "{{ value_json.requests_deferred }}",
+        },
     ]
 
     for s in sensors:
@@ -422,10 +497,19 @@ def main():
             publisher.publish(f"{base}/vram/usage", vram)
             log.debug("VRAM: %.1f%% (%.1f/%.1f GB)", vram["percent"], vram["used_gb"], vram["total_gb"])
 
-            # Context
+            # Context + inference speed
             ctx = get_context_usage(config)
             publisher.publish(f"{base}/context/usage", ctx)
-            log.debug("Context: %.2f%% (%d/%d tokens)", ctx["percent"], ctx["used_tokens"], ctx["total_tokens"])
+            log.debug(
+                "Context: %.2f%% (%d/%d tokens) | prompt=%.1f t/s gen=%.1f t/s queued=%d",
+                ctx["percent"], ctx["used_tokens"], ctx["total_tokens"],
+                ctx["prompt_tps"], ctx["gen_tps"], ctx["requests_deferred"],
+            )
+
+            # Llama state (idle / processing / sleeping)
+            status = get_llama_status(config)
+            publisher.publish(f"{base}/llama/status", status)
+            log.debug("Llama state: %s (%d/%d slots active)", status["state"], status["active_slots"], status["total_slots"])
 
             # Availability heartbeat
             publisher._client.publish(f"{base}/status", "online", qos=publisher.qos, retain=True)

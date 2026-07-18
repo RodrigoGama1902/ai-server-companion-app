@@ -7,6 +7,24 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ── HA CSS variable simulation ──── */
+    :root {
+      --ha-card-background:    #1e293b;
+      --card-background-color: #1e293b;
+      --ha-card-border-radius: 12px;
+      --primary-text-color:    #f1f5f9;
+      --secondary-text-color:  #64748b;
+      --divider-color:         rgba(255,255,255,.1);
+    }
+    :root.light {
+      --ha-card-background:    #ffffff;
+      --card-background-color: #ffffff;
+      --primary-text-color:    #212121;
+      --secondary-text-color:  #6b7280;
+      --divider-color:         rgba(0,0,0,.12);
+    }
+    :root.light body { background: #e8edf2; color: #1e293b; }
+
     body {
       min-height: 100vh;
       background: #111827;
@@ -148,9 +166,11 @@
   </div>
 
   <div class="controls">
-    <button class="ctrl-btn" id="btn-offline" onclick="applyState('offline')">⬛ Offline</button>
-    <button class="ctrl-btn" id="btn-online"  onclick="applyState('online')">🟢 Carga Normal</button>
-    <button class="ctrl-btn" id="btn-high"    onclick="applyState('high')">🔴 Alta Carga</button>
+    <button class="ctrl-btn" id="btn-offline"    onclick="applyState('offline')">⬛ Offline</button>
+    <button class="ctrl-btn" id="btn-idle"       onclick="applyState('idle')">🟢 Idle</button>
+    <button class="ctrl-btn" id="btn-processing" onclick="applyState('processing')">🔵 Processing</button>
+    <button class="ctrl-btn" id="btn-sleeping"   onclick="applyState('sleeping')">💤 Sleeping</button>
+    <button class="ctrl-btn" id="btn-theme"      onclick="toggleTheme()">☀️ Light</button>
   </div>
 
   <div class="card-frame">
@@ -165,8 +185,15 @@
 <span class="yk">server_entity</span>: <span class="yv">switch.ai_server</span>
 <span class="yk">cpu_entity</span>: <span class="yv">sensor.ai_server_cpu_usage</span>
 <span class="yk">gpu_entity</span>: <span class="yv">sensor.ai_server_gpu_usage</span>
+<span class="yk">gpu_temp_entity</span>: <span class="yv">sensor.ai_server_gpu_temperature</span>
 <span class="yk">ram_entity</span>: <span class="yv">sensor.ai_server_ram_usage</span>
 <span class="yk">vram_entity</span>: <span class="yv">sensor.ai_server_vram_usage</span>
+<span class="yk">context_entity</span>: <span class="yv">sensor.ai_server_context_usage</span>
+<span class="yk">context_tokens_entity</span>: <span class="yv">sensor.ai_server_context_tokens_used</span>
+<span class="yk">llama_state_entity</span>: <span class="yv">sensor.ai_server_llama_state</span>
+<span class="yk">llama_prompt_tps_entity</span>: <span class="yv">sensor.ai_server_llama_prompt_tps</span>
+<span class="yk">llama_gen_tps_entity</span>: <span class="yv">sensor.ai_server_llama_gen_tps</span>
+<span class="yk">llama_requests_deferred_entity</span>: <span class="yv">sensor.ai_server_llama_requests_deferred</span>
 <span class="yk">cost_entity</span>: <span class="yv">sensor.custo_diario_ai_machine</span>
 <span class="yk">monthly_cost_entity</span>: <span class="yv">sensor.custo_mensal_ai_machine</span></pre>
   </div>
@@ -188,43 +215,87 @@
   <!-- 3. Init script -->
   <script>
     const CONFIG = {
-      title:               'AI Server',
-      server_entity:       'switch.ai_server',
-      cpu_entity:          'sensor.ai_server_cpu_usage',
-      gpu_entity:          'sensor.ai_server_gpu_usage',
-      ram_entity:          'sensor.ai_server_ram_usage',
-      vram_entity:         'sensor.ai_server_vram_usage',
-      cost_entity:         'sensor.custo_diario_ai_machine',
-      monthly_cost_entity: 'sensor.custo_mensal_ai_machine',
+      title:                          'AI Server',
+      server_entity:                  'switch.ai_server',
+      cpu_entity:                     'sensor.ai_server_cpu_usage',
+      gpu_entity:                     'sensor.ai_server_gpu_usage',
+      gpu_temp_entity:                'sensor.ai_server_gpu_temperature',
+      ram_entity:                     'sensor.ai_server_ram_usage',
+      vram_entity:                    'sensor.ai_server_vram_usage',
+      context_entity:                 'sensor.ai_server_context_usage',
+      context_tokens_entity:          'sensor.ai_server_context_tokens_used',
+      llama_state_entity:             'sensor.ai_server_llama_state',
+      llama_prompt_tps_entity:        'sensor.ai_server_llama_prompt_tps',
+      llama_gen_tps_entity:           'sensor.ai_server_llama_gen_tps',
+      llama_requests_deferred_entity: 'sensor.ai_server_llama_requests_deferred',
+      cost_entity:                    'sensor.custo_diario_ai_machine',
+      monthly_cost_entity:            'sensor.custo_mensal_ai_machine',
     };
 
     const PRESETS = {
       offline: {
-        'switch.ai_server':               { state: 'off' },
-        'sensor.ai_server_cpu_usage':     { state: '0.0' },
-        'sensor.ai_server_gpu_usage':     { state: '0' },
-        'sensor.ai_server_ram_usage':     { state: '14.4' },
-        'sensor.ai_server_vram_usage':    { state: '0' },
-        'sensor.custo_diario_ai_machine': { state: '0.19' },
-        'sensor.custo_mensal_ai_machine': { state: '4.32' },
+        'switch.ai_server':                            { state: 'off' },
+        'sensor.ai_server_cpu_usage':                  { state: '0.0' },
+        'sensor.ai_server_gpu_usage':                  { state: '0' },
+        'sensor.ai_server_gpu_temperature':            { state: '38' },
+        'sensor.ai_server_ram_usage':                  { state: '14.4' },
+        'sensor.ai_server_vram_usage':                 { state: '0' },
+        'sensor.ai_server_context_usage':              { state: '0' },
+        'sensor.ai_server_context_tokens_used':        { state: '0' },
+        'sensor.ai_server_llama_state':                { state: 'idle' },
+        'sensor.ai_server_llama_prompt_tps':           { state: '0' },
+        'sensor.ai_server_llama_gen_tps':              { state: '0' },
+        'sensor.ai_server_llama_requests_deferred':    { state: '0' },
+        'sensor.custo_diario_ai_machine':              { state: '0.19' },
+        'sensor.custo_mensal_ai_machine':              { state: '4.32' },
       },
-      online: {
-        'switch.ai_server':               { state: 'on' },
-        'sensor.ai_server_cpu_usage':     { state: '23.5' },
-        'sensor.ai_server_gpu_usage':     { state: '47' },
-        'sensor.ai_server_ram_usage':     { state: '38.2' },
-        'sensor.ai_server_vram_usage':    { state: '92.17' },
-        'sensor.custo_diario_ai_machine': { state: '0.47' },
-        'sensor.custo_mensal_ai_machine': { state: '11.85' },
+      idle: {
+        'switch.ai_server':                            { state: 'on' },
+        'sensor.ai_server_cpu_usage':                  { state: '8.2' },
+        'sensor.ai_server_gpu_usage':                  { state: '14' },
+        'sensor.ai_server_gpu_temperature':            { state: '54' },
+        'sensor.ai_server_ram_usage':                  { state: '38.2' },
+        'sensor.ai_server_vram_usage':                 { state: '62.1' },
+        'sensor.ai_server_context_usage':              { state: '22.5' },
+        'sensor.ai_server_context_tokens_used':        { state: '7373' },
+        'sensor.ai_server_llama_state':                { state: 'idle' },
+        'sensor.ai_server_llama_prompt_tps':           { state: '0' },
+        'sensor.ai_server_llama_gen_tps':              { state: '0' },
+        'sensor.ai_server_llama_requests_deferred':    { state: '0' },
+        'sensor.custo_diario_ai_machine':              { state: '0.47' },
+        'sensor.custo_mensal_ai_machine':              { state: '11.85' },
       },
-      high: {
-        'switch.ai_server':               { state: 'on' },
-        'sensor.ai_server_cpu_usage':     { state: '87.3' },
-        'sensor.ai_server_gpu_usage':     { state: '99' },
-        'sensor.ai_server_ram_usage':     { state: '72.1' },
-        'sensor.ai_server_vram_usage':    { state: '99.8' },
-        'sensor.custo_diario_ai_machine': { state: '2.84' },
-        'sensor.custo_mensal_ai_machine': { state: '38.60' },
+      processing: {
+        'switch.ai_server':                            { state: 'on' },
+        'sensor.ai_server_cpu_usage':                  { state: '71.3' },
+        'sensor.ai_server_gpu_usage':                  { state: '94' },
+        'sensor.ai_server_gpu_temperature':            { state: '76' },
+        'sensor.ai_server_ram_usage':                  { state: '55.8' },
+        'sensor.ai_server_vram_usage':                 { state: '91.4' },
+        'sensor.ai_server_context_usage':              { state: '67.8' },
+        'sensor.ai_server_context_tokens_used':        { state: '22217' },
+        'sensor.ai_server_llama_state':                { state: 'processing' },
+        'sensor.ai_server_llama_prompt_tps':           { state: '38.1' },
+        'sensor.ai_server_llama_gen_tps':              { state: '52.4' },
+        'sensor.ai_server_llama_requests_deferred':    { state: '2' },
+        'sensor.custo_diario_ai_machine':              { state: '2.84' },
+        'sensor.custo_mensal_ai_machine':              { state: '38.60' },
+      },
+      sleeping: {
+        'switch.ai_server':                            { state: 'on' },
+        'sensor.ai_server_cpu_usage':                  { state: '1.1' },
+        'sensor.ai_server_gpu_usage':                  { state: '0' },
+        'sensor.ai_server_gpu_temperature':            { state: '41' },
+        'sensor.ai_server_ram_usage':                  { state: '14.4' },
+        'sensor.ai_server_vram_usage':                 { state: '0' },
+        'sensor.ai_server_context_usage':              { state: '0' },
+        'sensor.ai_server_context_tokens_used':        { state: '0' },
+        'sensor.ai_server_llama_state':                { state: 'sleeping' },
+        'sensor.ai_server_llama_prompt_tps':           { state: '0' },
+        'sensor.ai_server_llama_gen_tps':              { state: '0' },
+        'sensor.ai_server_llama_requests_deferred':    { state: '0' },
+        'sensor.custo_diario_ai_machine':              { state: '0.31' },
+        'sensor.custo_mensal_ai_machine':              { state: '8.20' },
       },
     };
 
@@ -236,7 +307,7 @@
         states: PRESETS[preset],
         callService(domain, service) {
           console.log(`[mock-hass] ${domain}.${service}`);
-          if (service === 'turn_on')  applyState('online');
+          if (service === 'turn_on')  applyState('idle');
           if (service === 'turn_off') applyState('offline');
         },
       };
@@ -244,14 +315,22 @@
 
     function applyState(preset) {
       currentPreset = preset;
-      document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.ctrl-btn:not(#btn-theme)').forEach(b => b.classList.remove('active'));
       const btn = document.getElementById('btn-' + preset);
       if (btn) btn.classList.add('active');
       card.setConfig(CONFIG);
       card.hass = mockHass(preset);
     }
 
-    customElements.whenDefined('lovelace-ai-server').then(() => applyState('offline'));
+    function toggleTheme() {
+      document.documentElement.classList.toggle('light');
+      const btn = document.getElementById('btn-theme');
+      btn.textContent = document.documentElement.classList.contains('light') ? '🌙 Dark' : '☀️ Light';
+      card.setConfig(CONFIG);
+      card.hass = mockHass(currentPreset);
+    }
+
+    customElements.whenDefined('lovelace-ai-server').then(() => applyState('idle'));
   </script>
 
 </body>
