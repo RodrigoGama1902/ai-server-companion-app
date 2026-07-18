@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Server Card — Preview Local</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: #111827;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 24px 64px;
+      gap: 28px;
+      color: #f1f5f9;
+    }
+
+    /* ── Header ───────────────────────── */
+    .page-header { text-align: center; }
+    .page-header h1 {
+      font-size: 13px;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+    }
+    .page-header p {
+      margin-top: 5px;
+      font-size: 12px;
+      color: #334155;
+    }
+
+    /* ── State buttons ────────────────── */
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .ctrl-btn {
+      padding: 8px 20px;
+      background: #1e293b;
+      border: 1.5px solid #334155;
+      border-radius: 8px;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background .15s, border-color .15s, color .15s;
+    }
+    .ctrl-btn:hover { background: #263245; color: #94a3b8; }
+    .ctrl-btn.active {
+      background: rgba(99, 102, 241, .15);
+      border-color: rgba(99, 102, 241, .5);
+      color: #818cf8;
+    }
+
+    /* ── Card slot ────────────────────── */
+    .card-frame { width: 340px; }
+
+    /* ── YAML block ───────────────────── */
+    .yaml-block {
+      width: 340px;
+      background: #0d1526;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+    .yaml-block h2 {
+      font-size: 10px;
+      font-weight: 700;
+      color: #334155;
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      margin-bottom: 12px;
+    }
+    .yaml-block pre {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Menlo', monospace;
+      font-size: 12px;
+      line-height: 1.65;
+      overflow-x: auto;
+    }
+    .yk { color: #818cf8; }  /* key   */
+    .yv { color: #34d399; }  /* value */
+
+    /* ── How-to footer ────────────────── */
+    .how-to {
+      width: 340px;
+      background: #0d1526;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .how-to summary {
+      padding: 12px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .how-to summary::before { content: '▶ '; font-size: 10px; }
+    .how-to[open] summary::before { content: '▼ '; }
+    .how-to summary:hover { color: #64748b; }
+    .how-to .how-body {
+      padding: 0 18px 16px;
+      font-size: 12px;
+      line-height: 1.7;
+      color: #475569;
+      border-top: 1px solid #1e293b;
+    }
+    .how-to .how-body p { margin-top: 10px; }
+    .how-to code {
+      background: #1e293b;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Cascadia Code', 'Consolas', monospace;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .how-to b { color: #64748b; }
+  </style>
+</head>
+<body>
+
+  <!-- 1. Mock ha-card BEFORE loading the card script -->
+  <script>
+    if (!customElements.get('ha-card')) {
+      customElements.define('ha-card', class extends HTMLElement {
+        connectedCallback() { this.style.display = 'block'; }
+      });
+    }
+  </script>
+
+  <!-- 2. Load the actual card -->
+  <script src="../lovelace-ai-server.js"></script>
+
+  <!-- ── Page content ──────────────────────────── -->
+
+  <div class="page-header">
+    <h1>AI Server Card — Preview Local</h1>
+    <p>Simula o card exatamente como aparece no Home Assistant</p>
+  </div>
+
+  <div class="controls">
+    <button class="ctrl-btn" id="btn-offline" onclick="applyState('offline')">⬛ Offline</button>
+    <button class="ctrl-btn" id="btn-online"  onclick="applyState('online')">🟢 Carga Normal</button>
+    <button class="ctrl-btn" id="btn-high"    onclick="applyState('high')">🔴 Alta Carga</button>
+  </div>
+
+  <div class="card-frame">
+    <lovelace-ai-server id="the-card"></lovelace-ai-server>
+  </div>
+
+  <!-- YAML config reference -->
+  <div class="yaml-block">
+    <h2>Configuração do Card (YAML)</h2>
+    <pre><span class="yk">type</span>: <span class="yv">custom:lovelace-ai-server</span>
+<span class="yk">title</span>: <span class="yv">AI Server</span>
+<span class="yk">server_entity</span>: <span class="yv">switch.ai_server</span>
+<span class="yk">cpu_entity</span>: <span class="yv">sensor.ai_server_cpu_usage</span>
+<span class="yk">gpu_entity</span>: <span class="yv">sensor.ai_server_gpu_usage</span>
+<span class="yk">ram_entity</span>: <span class="yv">sensor.ai_server_ram_usage</span>
+<span class="yk">vram_entity</span>: <span class="yv">sensor.ai_server_vram_usage</span>
+<span class="yk">cost_entity</span>: <span class="yv">sensor.custo_diario_ai_machine</span>
+<span class="yk">monthly_cost_entity</span>: <span class="yv">sensor.custo_mensal_ai_machine</span></pre>
+  </div>
+
+  <!-- How to serve locally -->
+  <details class="how-to">
+    <summary>Como rodar o preview localmente</summary>
+    <div class="how-body">
+      <p>Abra um terminal na pasta do projeto e rode <b>qualquer</b> um dos servidores abaixo:</p>
+      <p><code>python -m http.server 8080</code></p>
+      <p><code>npx serve .</code></p>
+      <p>Depois acesse <code>http://localhost:8080/dev/</code> no navegador.</p>
+      <p>Para instalar no HA: copie <code>lovelace-ai-server.js</code> para
+        <code>config/www/</code> e adicione como recurso externo
+        <code>/local/lovelace-ai-server.js</code>.</p>
+    </div>
+  </details>
+
+  <!-- 3. Init script -->
+  <script>
+    const CONFIG = {
+      title:               'AI Server',
+      server_entity:       'switch.ai_server',
+      cpu_entity:          'sensor.ai_server_cpu_usage',
+      gpu_entity:          'sensor.ai_server_gpu_usage',
+      ram_entity:          'sensor.ai_server_ram_usage',
+      vram_entity:         'sensor.ai_server_vram_usage',
+      cost_entity:         'sensor.custo_diario_ai_machine',
+      monthly_cost_entity: 'sensor.custo_mensal_ai_machine',
+    };
+
+    const PRESETS = {
+      offline: {
+        'switch.ai_server':               { state: 'off' },
+        'sensor.ai_server_cpu_usage':     { state: '0.0' },
+        'sensor.ai_server_gpu_usage':     { state: '0' },
+        'sensor.ai_server_ram_usage':     { state: '14.4' },
+        'sensor.ai_server_vram_usage':    { state: '0' },
+        'sensor.custo_diario_ai_machine': { state: '0.19' },
+        'sensor.custo_mensal_ai_machine': { state: '4.32' },
+      },
+      online: {
+        'switch.ai_server':               { state: 'on' },
+        'sensor.ai_server_cpu_usage':     { state: '23.5' },
+        'sensor.ai_server_gpu_usage':     { state: '47' },
+        'sensor.ai_server_ram_usage':     { state: '38.2' },
+        'sensor.ai_server_vram_usage':    { state: '92.17' },
+        'sensor.custo_diario_ai_machine': { state: '0.47' },
+        'sensor.custo_mensal_ai_machine': { state: '11.85' },
+      },
+      high: {
+        'switch.ai_server':               { state: 'on' },
+        'sensor.ai_server_cpu_usage':     { state: '87.3' },
+        'sensor.ai_server_gpu_usage':     { state: '99' },
+        'sensor.ai_server_ram_usage':     { state: '72.1' },
+        'sensor.ai_server_vram_usage':    { state: '99.8' },
+        'sensor.custo_diario_ai_machine': { state: '2.84' },
+        'sensor.custo_mensal_ai_machine': { state: '38.60' },
+      },
+    };
+
+    let currentPreset = 'offline';
+    const card = document.getElementById('the-card');
+
+    function mockHass(preset) {
+      return {
+        states: PRESETS[preset],
+        callService(domain, service) {
+          console.log(`[mock-hass] ${domain}.${service}`);
+          if (service === 'turn_on')  applyState('online');
+          if (service === 'turn_off') applyState('offline');
+        },
+      };
+    }
+
+    function applyState(preset) {
+      currentPreset = preset;
+      document.querySelectorAll('.ctrl-btn').forEach(b => b.classList.remove('active'));
+      const btn = document.getElementById('btn-' + preset);
+      if (btn) btn.classList.add('active');
+      card.setConfig(CONFIG);
+      card.hass = mockHass(preset);
+    }
+
+    customElements.whenDefined('lovelace-ai-server').then(() => applyState('offline'));
+  </script>
+
+</body>
+</html>
