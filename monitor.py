@@ -99,8 +99,8 @@ def get_ram_usage() -> dict:
     return {
         "total_gb": round(vm.total / (1024 ** 3), 2),
         "used_gb": round(vm.used / (1024 ** 3), 2),
-        "total_mb": round(vm.total / (1024 ** 2), 2),
-        "used_mb": round(vm.used / (1024 ** 2), 2),
+        "total_mib": round(vm.total / (1024 ** 2), 2),
+        "used_mib": round(vm.used / (1024 ** 2), 2),
         "percent": vm.percent,
     }
 
@@ -148,13 +148,13 @@ def get_vram_usage() -> dict:
         info = pynvml.nvmlDeviceGetMemoryInfo(handle)
         total_gb = round(info.total / (1024 ** 3), 2)
         used_gb = round(info.used / (1024 ** 3), 2)
-        total_mb = round(info.total / (1024 ** 2), 2)
-        used_mb = round(info.used / (1024 ** 2), 2)
+        total_mib = round(info.total / (1024 ** 2), 2)
+        used_mib = round(info.used / (1024 ** 2), 2)
         percent = round(used_gb / total_gb * 100, 2) if total_gb else 0
-        return {"total_gb": total_gb, "used_gb": used_gb, "total_mb": total_mb, "used_mb": used_mb, "percent": percent}
+        return {"total_gb": total_gb, "used_gb": used_gb, "total_mib": total_mib, "used_mib": used_mib, "percent": percent}
     except Exception as exc:
         log.warning("Failed to read VRAM metrics: %s", exc)
-        return {"total_gb": -1, "used_gb": -1, "total_mb": -1, "used_mb": -1, "percent": -1}
+        return {"total_gb": -1, "used_gb": -1, "total_mib": -1, "used_mib": -1, "percent": -1}
 
 
 def _parse_prometheus_metric(text: str, name: str):
@@ -327,10 +327,10 @@ def publish_discovery_config(publisher: MQTTPublisher):
         {
             "name": "ram_usage_mb",
             "value_topic": f"{base}/ram/usage",
-            "unit": "MB",
+            "unit": "MiB",
             "icon": "mdi:memory",
             "device_class": "data_size",
-            "value_template": "{{ value_json.used_mb }}",
+            "value_template": "{{ value_json.used_mib }}",
         },
         {
             "name": "gpu_usage",
@@ -338,6 +338,14 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "unit": "%",
             "icon": "mdi:speedometer",
             "value_template": "{{ value_json.percent }}",
+        },
+        {
+            "name": "gpu_temperature",
+            "value_topic": f"{base}/gpu/usage",
+            "unit": "°C",
+            "icon": "mdi:thermometer",
+            "device_class": "temperature",
+            "value_template": "{{ value_json.temp_c }}",
         },
         {
             "name": "vram_usage",
@@ -349,10 +357,10 @@ def publish_discovery_config(publisher: MQTTPublisher):
         {
             "name": "vram_usage_mb",
             "value_topic": f"{base}/vram/usage",
-            "unit": "MB",
+            "unit": "MiB",
             "icon": "mdi:memory",
             "device_class": "data_size",
-            "value_template": "{{ value_json.used_mb }}",
+            "value_template": "{{ value_json.used_mib }}",
         },
         {
             "name": "context_usage",
@@ -435,7 +443,7 @@ def main():
 
     # Final offline message
     try:
-        publisher.publish(f"{base}/status", "offline")
+        publisher._client.publish(f"{base}/status", "offline", qos=publisher.qos, retain=True)
     except Exception:
         pass
     publisher.disconnect()
