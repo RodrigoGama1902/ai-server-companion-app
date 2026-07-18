@@ -305,7 +305,8 @@ class MQTTPublisher:
 
     def publish_discovery(self, sensor_name: str, device_name: str, value_topic: str,
                           unit: str = "", icon: str = "", device_class: str = "",
-                          value_template: str = "{{ value_json.percent }}"):
+                          value_template: str = "{{ value_json.percent }}",
+                          state_class: str = "measurement"):
         disc_topic = (
             f"{self.discovery_prefix}/sensor/{self.base_topic}/{sensor_name}/config"
         )
@@ -318,13 +319,14 @@ class MQTTPublisher:
                 "model": "AI Server",
                 "sw_version": "1.0",
             },
-            "state_class": "measurement",
             "state_topic": value_topic,
             "value_template": value_template,
             "availability_topic": f"{self.base_topic}/status",
             "payload_available": "online",
             "payload_not_available": "offline",
         }
+        if state_class:
+            config_payload["state_class"] = state_class
         if unit:
             config_payload["unit_of_measurement"] = unit
         if icon:
@@ -415,6 +417,7 @@ def publish_discovery_config(publisher: MQTTPublisher):
             "unit": "",
             "icon": "mdi:robot",
             "value_template": "{{ value_json.state }}",
+            "state_class": "",  # text sensor — not a numeric measurement
         },
         {
             "name": "llama_active_slots",
@@ -455,6 +458,7 @@ def publish_discovery_config(publisher: MQTTPublisher):
             icon=s["icon"],
             device_class=s.get("device_class", ""),
             value_template=s.get("value_template", "{{ value_json.percent }}"),
+            state_class=s.get("state_class", "measurement"),
         )
 
 
@@ -467,6 +471,11 @@ def main():
 
     publisher = MQTTPublisher(config)
     publisher.connect()
+
+    # Mark online immediately so HA doesn't see newly discovered sensors as unavailable
+    publisher._client.publish(
+        f"{publisher.base_topic}/status", "online", qos=publisher.qos, retain=True
+    )
 
     # Send discovery config
     publish_discovery_config(publisher)
